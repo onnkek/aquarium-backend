@@ -219,6 +219,7 @@ void setup()
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   WiFi.setSleep(false);
+  btStop();
   while (WiFi.status() != WL_CONNECTED)
   {
     delay(500);
@@ -309,25 +310,27 @@ void loop()
 {
 
   ftpSrv.handleFTP();
-
-  for (int i = 0; i < EXTRA_COUNT; i++)
-    checkExtraRelay(i, lastTime);
-
-  for (int i = 0; i < DOSER_COUNT; i++)
-    checkPumpSchedule(i, lastTime);
-
-  checkARGB(lastTime);
-  checkTemp();
-
-  // Reset hasRunToday at midnight
-  if (lastTime.hour() == 0 && lastTime.minute() == 0 && lastTime.second() == 0)
+  EVERY_MS(10)
   {
+    for (int i = 0; i < EXTRA_COUNT; i++)
+      checkExtraRelay(i, lastTime);
+
     for (int i = 0; i < DOSER_COUNT; i++)
+      checkPumpSchedule(i, lastTime);
+
+    checkARGB(lastTime);
+    checkTemp();
+
+    // Reset hasRunToday at midnight
+    if (lastTime.hour() == 0 && lastTime.minute() == 0 && lastTime.second() == 0 && config["doser"][String(1)]["hasRunToday"])
     {
-      config["doser"][String(i)]["hasRunToday"] = false;
+      for (int i = 0; i < DOSER_COUNT; i++)
+      {
+        config["doser"][String(i)]["hasRunToday"] = false;
+      }
+      saveConfigToSD();
+      writeLOG("New day -> reset doser flags", 1, LOGS_DOSER);
     }
-    saveConfigToSD();
-    writeLOG("New day -> reset doser flags", 1, LOGS_DOSER);
   }
 
   EVERY_MS(1000)
@@ -741,10 +744,12 @@ void checkPumpSchedule(int index, DateTime now)
   case 2: // AUTO
     if (!dayEnabled)
       break;
-    if(hasRunToday && state.progress != 100 && !state.running) {
+    if (hasRunToday && state.progress != 100 && !state.running)
+    {
       state.progress = 100;
     }
-    if(!hasRunToday && state.progress != 0 && !state.running) {
+    if (!hasRunToday && state.progress != 0 && !state.running)
+    {
       state.progress = 0;
     }
     if (!hasRunToday && now.hour() >= startHour && now.minute() >= startMinute && now.second() >= 0 && !state.running)
