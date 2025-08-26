@@ -15,7 +15,7 @@ bool getRelayStatus(int status);
 void loadConfigFromSD();
 void saveConfigToSD();
 String readLOG(String path);
-void writeLOG(String text, int type, String path);
+void writeLOG(const String &text, int type, const String &path);
 String getDateString();
 String getFullDateNumber(int number);
 String getContentType(const String &path);
