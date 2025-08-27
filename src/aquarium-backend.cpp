@@ -3,7 +3,6 @@
 #include "systemHandlers.h"
 #include "logsHandlers.h"
 #include <WiFi.h>
-// #include <WebServer.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <FTPServer.h>
@@ -11,7 +10,6 @@
 #include <SD.h>
 #include <SPI.h>
 #include <SPIFFS.h>
-// #include <driver/temperature_sensor.h>
 #include <ArduinoJson.h>
 #include <GTimer.h>
 #include <Wire.h>
@@ -33,17 +31,6 @@ CRGB leds[NUM_LEDS];
 byte argb_counter;
 
 RTC_DS3231 rtc;
-DateTime lastTime;
-QueueHandle_t rtcCmdQueue;
-enum RTCCmdType
-{
-  SET_TIME
-};
-struct RTCCmd
-{
-  RTCCmdType type;
-  DateTime dt;
-};
 
 char daysOfTheWeek[7][12] = {"su", "mo", "tu", "we", "th", "fr", "sa"};
 GyverRelay regulatorUp(NORMAL);
@@ -85,6 +72,85 @@ double statusHumidity = 0;
 
 double inputTemp = 0;
 
+// --- Кэш времени с мьютексом ---
+DateTime lastTime;
+SemaphoreHandle_t timeMutex;
+// --- Очередь для логов ---
+struct LogMessage
+{
+  char path[32];
+  char text[128];
+};
+QueueHandle_t logQueue;
+
+// --- Чтение кэша времени ---
+DateTime getLastTime()
+{
+  DateTime copy(DateTime(2000, 1, 1, 0, 0, 0));
+  if (xSemaphoreTake(timeMutex, portMAX_DELAY) == pdTRUE)
+  {
+    copy = lastTime;
+    xSemaphoreGive(timeMutex);
+  }
+  return copy;
+}
+
+// --- Таск: обновление времени из RTC ---
+void vTaskUpdateTime(void *pvParameters)
+{
+  for (;;)
+  {
+    DateTime now = rtc.now();
+    if (xSemaphoreTake(timeMutex, portMAX_DELAY) == pdTRUE)
+    {
+      lastTime = now;
+      if (!lastTime.isValid())
+      {
+        // writeLOG("!!!!!DATETIME IS INVALID!!!!!", 2, LOGS_SYSTEM);
+        Serial.println("!!!!!DATETIME IS INVALID!!!!!");
+        Serial.println(String("now.hour(): ") + lastTime.hour());
+        Serial.println(String("now.minute(): ") + lastTime.minute());
+        Serial.println(String("now.seconds(): ") + lastTime.second());
+        Serial.println(String("now.year(): ") + lastTime.year());
+        Serial.println(String("now.day(): ") + lastTime.day());
+        Serial.println(String("now.month(): ") + lastTime.month());
+      }
+      xSemaphoreGive(timeMutex);
+    }
+    vTaskDelay(pdMS_TO_TICKS(500));
+  }
+}
+
+// --- Таск: логирование в файл ---
+void vTaskLogger(void *pvParameters)
+{
+  LogMessage msg;
+  File logFile;
+
+  if (!SD.begin())
+  {
+    Serial.println("SD init failed!");
+    vTaskDelete(NULL);
+  }
+
+  for (;;)
+  {
+    if (xQueueReceive(logQueue, &msg, portMAX_DELAY) == pdPASS)
+    {
+      logFile = SD.open(msg.path, FILE_APPEND);
+      if (logFile)
+      {
+        logFile.println(msg.text);
+        logFile.close();
+      }
+      else
+      {
+        Serial.printf("Failed to open file: %s\n", msg.path);
+      }
+    }
+  }
+}
+
 void parseTime(const char *timeStr, int &hour, int &minute)
 {
   if (!timeStr)
@@ -103,90 +169,14 @@ void addCORS(AsyncWebServerResponse *response)
   response->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 }
 
-void webServerTask(void *pvParameters)
-{
-  server.on("/logs/system", HTTP_GET, handleGetSystemLogs);
-  server.on("/logs/relay", HTTP_GET, handleGetRelayLogs);
-  server.on("/logs/doser", HTTP_GET, handleGetDoserLogs);
-
-  server.on("/logs/clear/system", HTTP_GET, handleGetClearSystemLogs);
-  server.on("/logs/clear/relay", HTTP_GET, handleGetClearRelayLogs);
-  server.on("/logs/clear/doser", HTTP_GET, handleGetClearDoserLogs);
-
-  server.on("/current", HTTP_GET, handleGetCurrent);
-  server.on("/config", HTTP_GET, handleGetConfig);
-  server.on(
-      "/config", HTTP_POST,
-      [](AsyncWebServerRequest *request) {},
-      nullptr,
-      handlePostConfig);
-  server.on(
-      "/time", HTTP_POST,
-      [](AsyncWebServerRequest *request) {},
-      nullptr,
-      handlePostTime);
-
-  server.serveStatic("/", SD, "/").setDefaultFile("index.html");
-  server.serveStatic("/logs", SD, "/index.html");
-  server.serveStatic("/archive", SD, "/index.html");
-  server.onNotFound([](AsyncWebServerRequest *request)
-                    {
-    if (request->method() == HTTP_OPTIONS) {
-      AsyncWebServerResponse *response = request->beginResponse(204);
-      addCORS(response);
-      request->send(response);
-    } else {
-      request->send(404, "text/html", "Not found");
-    } });
-
-  server.begin();
-  int core_id = xPortGetCoreID();
-  writeLOG(String("Web server started on core: ") + core_id, 0, LOGS_SYSTEM);
-  while (true)
-  {
-    delay(1000); // задача держится живой
-  }
-}
-
 void safeAdjust(DateTime dt)
 {
-  RTCCmd cmd = {SET_TIME, dt};
-  xQueueSend(rtcCmdQueue, &cmd, portMAX_DELAY);
-}
-
-void rtcTask(void *pvParameters)
-{
-  RTCCmd cmd;
-  for (;;)
-  {
-    if (xQueueReceive(rtcCmdQueue, &cmd, 0) == pdPASS)
-    {
-      if (cmd.type == SET_TIME)
-      {
-        rtc.adjust(cmd.dt);
-      }
-    }
-    lastTime = rtc.now();
-    if (!lastTime.isValid())
-    {
-      writeLOG("!!!!!DATETIME IS INVALID!!!!!", 2, LOGS_SYSTEM);
-      Serial.println("!!!!!DATETIME IS INVALID!!!!!");
-      Serial.println(String("now.hour(): ") + lastTime.hour());
-      Serial.println(String("now.minute(): ") + lastTime.minute());
-      Serial.println(String("now.seconds(): ") + lastTime.second());
-      Serial.println(String("now.year(): ") + lastTime.year());
-      Serial.println(String("now.day(): ") + lastTime.day());
-      Serial.println(String("now.month(): ") + lastTime.month());
-      return;
-    }
-    vTaskDelay(pdMS_TO_TICKS(1000));
-  }
+  rtc.adjust(dt);
 }
 
 void setup()
 {
   Serial.begin(115200);
-  Wire.begin(SDA_PIN, SCL_PIN);
   pinMode(LED, OUTPUT); // LED
 
   pinMode(RELAY_COOL, OUTPUT);
@@ -208,8 +198,14 @@ void setup()
   digitalWrite(DOSER_3, LOW);
   digitalWrite(DOSER_4, LOW);
 
-  ds.requestTemp();
+  Wire.begin(SDA_PIN, SCL_PIN);
+  if (rtc.begin() == false)
+  {
+    Serial.println("RTC detected");
+    lastTime = rtc.now();
+  }
 
+  ds.requestTemp();
   delay(1000);
 
   FastLED.addLeds<WS2811, ARGB_PIN, GRB>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
@@ -230,6 +226,15 @@ void setup()
   Serial.print("Got IP: ");
   Serial.println(WiFi.localIP());
 
+  timeMutex = xSemaphoreCreateMutex();
+  logQueue = xQueueCreate(10, sizeof(LogMessage));
+  if (!logQueue)
+  {
+    Serial.println("Queue create failed!");
+    while (1)
+      ;
+  }
+
   if (!SPIFFS.begin(true))
   {
     Serial.println("SPIFFS Mount Failed");
@@ -243,7 +248,7 @@ void setup()
     Serial.println("Card Mount Failed");
     return;
   }
-  loadConfigFromSD(); // Read config
+
   uint64_t cardSize = SD.cardSize() / (1024 * 1024);
   Serial.printf("SD Card Size: %lluMB\n", cardSize);
 
@@ -253,47 +258,53 @@ void setup()
   // если датчик не обнаружен, вводим программу в бесконечный цикл
   if (humiditySensor.begin() == false)
   {
-    writeLOG("AHT20 not detected", 2, LOGS_SYSTEM);
+    // writeLOG("AHT20 not detected", 2, LOGS_SYSTEM);
   }
   else
   {
-    writeLOG("AHT20 sensor initialized", 0, LOGS_SYSTEM);
+    // writeLOG("AHT20 sensor initialized", 0, LOGS_SYSTEM);
   }
 
-  if (rtc.begin() == false)
-  {
-    writeLOG("RTC detected", 2, LOGS_SYSTEM);
-  }
-  else
-  {
-    writeLOG("RTC initialized", 0, LOGS_SYSTEM);
-  }
-  rtcCmdQueue = xQueueCreate(10, sizeof(RTCCmd));
-  if (rtc.lostPower())
-  {
-    writeLOG("RTC lost power, let's set the time!", 2, LOGS_SYSTEM);
-    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-  }
+  server.on("/logs/system", HTTP_GET, handleGetSystemLogs);
+  server.on("/logs/relay", HTTP_GET, handleGetRelayLogs);
+  server.on("/logs/doser", HTTP_GET, handleGetDoserLogs);
 
-  int core_id = xPortGetCoreID();
-  writeLOG(String("App server started on core: ") + core_id, 0, LOGS_SYSTEM);
+  server.on("/logs/clear/system", HTTP_GET, handleGetClearSystemLogs);
+  server.on("/logs/clear/relay", HTTP_GET, handleGetClearRelayLogs);
+  server.on("/logs/clear/doser", HTTP_GET, handleGetClearDoserLogs);
 
-  xTaskCreatePinnedToCore(
-      webServerTask,
-      "WebServerTask",
-      4096,
-      NULL,
-      3,
-      NULL,
-      0);
-  xTaskCreatePinnedToCore(
-      rtcTask,
-      "RTC Task",
-      4096,
-      NULL,
-      5,
-      NULL,
-      1);
+  server.on("/current", HTTP_GET, handleGetCurrent);
+  server.on("/config", HTTP_GET, handleGetConfig);
+  server.on(
+      "/config", HTTP_POST,
+      [](AsyncWebServerRequest *request) {},
+      nullptr,
+      handlePostConfig);
+
+  server.on(
+      "/time", HTTP_POST,
+      [](AsyncWebServerRequest *request) {},
+      nullptr,
+      handlePostTime);
+
+  server.serveStatic("/", SD, "/").setDefaultFile("index.html");
+  server.serveStatic("/logs", SD, "/index.html");
+  server.serveStatic("/archive", SD, "/index.html");
+  server.onNotFound([](AsyncWebServerRequest *request)
+                    {
+    if (request->method() == HTTP_OPTIONS) {
+      AsyncWebServerResponse *response = request->beginResponse(204);
+      addCORS(response);
+      request->send(response);
+    } else {
+      request->send(404, "text/html", "Not found");
+    } });
+
+  server.begin();
+
+  // Core 1: UpdateTime + Logger
+  xTaskCreatePinnedToCore(vTaskUpdateTime, "UpdateTime", 2048, NULL, 3, NULL, 1);
+  xTaskCreatePinnedToCore(vTaskLogger, "Logger", 4096, NULL, 1, NULL, 1);
 
   double setting = config["temp"]["setting"];
   double hysteresis = config["temp"]["hysteresis"];
@@ -304,11 +315,13 @@ void setup()
   regulatorDown.hysteresis = hysteresis;
   regulatorUp.k = k;
   regulatorDown.k = k;
+  delay(1000);
+  loadConfigFromSD(); // Read config
+  log("ESP32 initialized successfully", INFO, LOGS_SYSTEM);
 }
 
 void loop()
 {
-
   ftpSrv.handleFTP();
   EVERY_MS(10)
   {
@@ -329,7 +342,7 @@ void loop()
         config["doser"][String(i)]["hasRunToday"] = false;
       }
       saveConfigToSD();
-      writeLOG("New day -> reset doser flags", 1, LOGS_DOSER);
+      log("New day -> reset doser flags", WARNING, LOGS_DOSER);
     }
   }
 
@@ -429,7 +442,7 @@ void loadConfigFromSD()
   File file = SPIFFS.open("/config.json", "r");
   if (!file)
   {
-    writeLOG("Failed to open config.json file for reading", 2, LOGS_SYSTEM);
+    log("Failed to open config.json file for reading", ERROR, LOGS_SYSTEM);
     return;
   }
 
@@ -438,11 +451,11 @@ void loadConfigFromSD()
 
   if (error)
   {
-    writeLOG("deserializeJson() failed: ", 2, LOGS_SYSTEM);
-    writeLOG(error.c_str(), 2, LOGS_SYSTEM);
+    log("deserializeJson() failed: ", ERROR, LOGS_SYSTEM);
+    log(error.c_str(), ERROR, LOGS_SYSTEM);
     return;
   }
-  writeLOG("config.json loaded successfully", 0, LOGS_SYSTEM);
+  log("config.json loaded successfully", INFO, LOGS_SYSTEM);
 }
 
 void saveConfigToSD()
@@ -450,12 +463,12 @@ void saveConfigToSD()
   File file = SPIFFS.open("/config.json", "w");
   if (!file)
   {
-    writeLOG("Failed to open config.json file for writing", 2, LOGS_SYSTEM);
+    log("Failed to open config.json file for writing", ERROR, LOGS_SYSTEM);
     return;
   }
   if (serializeJson(config, file) == 0)
   {
-    writeLOG("Failed to write to config.json", 2, LOGS_SYSTEM);
+    log("Failed to write to config.json", ERROR, LOGS_SYSTEM);
   }
   file.close();
 }
@@ -465,7 +478,7 @@ String readLOG(String path)
   File file = SD.open(path, "r");
   if (!file)
   {
-    writeLOG("Failed to open " + path + " file for reading", 2, LOGS_SYSTEM);
+    log("Failed to open " + path + " file for reading", ERROR, LOGS_SYSTEM);
     return "";
   }
   String log;
@@ -477,40 +490,38 @@ String readLOG(String path)
     lineCount++;
   }
   return log;
-  // writeLOG(path + " read successfully", 0, LOGS_SYSTEM);
+  // log(path + " read successfully", INFO, LOGS_SYSTEM);
 }
-
-void writeLOG(String text, int type, String path)
+String getLogType(LogType type)
 {
-  File file = SD.open(path, "a");
-  if (!file)
+  String typeString;
+  switch (type)
   {
-    writeLOG("Failed to open " + path + " file for writing", 2, LOGS_SYSTEM);
-    return;
+  case 0:
+    return "INFO";
+  case 1:
+    return "WARNING";
+  case 2:
+    return "ERROR";
+  default:
+    break;
   }
-  String typeString = "";
-  if (type == 0)
-  {
-    typeString = "Info";
-  }
-  else if (type == 1)
-  {
-    typeString = "Warning";
-  }
-  else
-  {
-    typeString = "Error";
-  }
-  String log = String("[") + getDateString() + "][" + typeString + "]: " + text;
-  file.println(log);
-  file.close();
+}
+void log(const String &text, LogType type, const String &path)
+{
+  LogMessage msg;
+
+  String log = String("[") + getDateString() + "][" + getLogType(type) + "]: " + text;
+  path.toCharArray(msg.path, sizeof(msg.path));
+  log.toCharArray(msg.text, sizeof(msg.text));
   Serial.println(log);
-  // writeLOG(path + " written successfully", 0, LOGS_SYSTEM);
+  xQueueSend(logQueue, &msg, 0);
 }
 
 String getDateString()
 {
-  return String(getFullDateNumber(lastTime.month())) + "/" + getFullDateNumber(lastTime.day()) + "/" + lastTime.year() + " " + getFullDateNumber(lastTime.hour()) + ":" + getFullDateNumber(lastTime.minute()) + ":" + getFullDateNumber(lastTime.second());
+  DateTime now = getLastTime();
+  return String(getFullDateNumber(now.month())) + "/" + getFullDateNumber(now.day()) + "/" + now.year() + " " + getFullDateNumber(now.hour()) + ":" + getFullDateNumber(now.minute()) + ":" + getFullDateNumber(now.second());
 }
 
 String getFullDateNumber(int number)
@@ -521,6 +532,24 @@ String getFullDateNumber(int number)
     result = "0" + String(number);
   }
   return result;
+}
+
+String getARGBMode(int mode)
+{
+  String modeString;
+  switch (mode)
+  {
+  case 1:
+    return "STATIC";
+  case 2:
+    return "CYCLE";
+  case 3:
+    return "GRADIENT";
+  case 4:
+    return "CUSTOM";
+  default:
+    return "OFF";
+  }
 }
 
 // ================== CHECK ARGB ==================
@@ -555,9 +584,9 @@ void checkARGB(DateTime now)
   if (active != lastActive || mode != lastMode)
   {
     if (!active || mode == 0)
-      writeLOG(String("ARGB") + " is OFF (Manual)", 0, LOGS_RELAY);
+      log(String("ARGB") + " is OFF (Manual)", INFO, LOGS_RELAY);
     else
-      writeLOG(String("ARGB") + " is " + mode, 0, LOGS_RELAY);
+      log(String("ARGB") + " is " + mode, INFO, LOGS_RELAY);
 
     lastActive = active;
     lastMode = mode;
@@ -650,7 +679,7 @@ void checkExtraRelay(int index, DateTime now)
     digitalWrite(extraPins[index], LOW);
     if (state.status != STATUS_OFF)
     {
-      writeLOG(String("RELAY_") + extraKeys[index] + " is OFF (Manual)", 0, LOGS_RELAY);
+      log(String("RELAY_") + extraKeys[index] + " is OFF (Manual)", INFO, LOGS_RELAY);
       state.status = STATUS_OFF;
     }
     break;
@@ -659,7 +688,7 @@ void checkExtraRelay(int index, DateTime now)
     digitalWrite(extraPins[index], HIGH);
     if (state.status != STATUS_ON)
     {
-      writeLOG(String("RELAY_") + extraKeys[index] + " is ON (Manual)", 0, LOGS_RELAY);
+      log(String("RELAY_") + extraKeys[index] + " is ON (Manual)", INFO, LOGS_RELAY);
       state.status = STATUS_ON;
     }
     break;
@@ -678,22 +707,14 @@ void checkExtraRelay(int index, DateTime now)
 
     if (active && state.status != STATUS_ON)
     {
-      // Serial.println(String("__________ON_________"));
-      // Serial.println(String("now.hour(): ") + now.hour());
-      // Serial.println(String("now.minute(): ") + now.minute());
-      // Serial.println(String("now.year(): ") + now.year());
       digitalWrite(extraPins[index], HIGH);
-      writeLOG(String("RELAY_") + extraKeys[index] + " is ON (Auto)", 0, LOGS_RELAY);
+      log(String("RELAY_") + extraKeys[index] + " is ON (Auto)", INFO, LOGS_RELAY);
       state.status = STATUS_ON;
     }
     else if (!active && state.status != STATUS_OFF)
     {
-      // Serial.println(String("__________OFF_________"));
-      // Serial.println(String("now.hour(): ") + now.hour());
-      // Serial.println(String("now.minute(): ") + now.minute());
-      // Serial.println(String("now.year(): ") + now.year());
       digitalWrite(extraPins[index], LOW);
-      writeLOG(String("RELAY_") + extraKeys[index] + " is OFF (Auto)", 0, LOGS_RELAY);
+      log(String("RELAY_") + extraKeys[index] + " is OFF (Auto)", INFO, LOGS_RELAY);
       state.status = STATUS_OFF;
     }
     break;
@@ -727,7 +748,7 @@ void checkPumpSchedule(int index, DateTime now)
     if (state.status != STATUS_OFF)
     {
       digitalWrite(doserPins[index], LOW);
-      writeLOG(String("Pump_") + String(index + 1) + " is OFF (Manual)", 0, LOGS_DOSER);
+      log(String("Pump_") + String(index + 1) + " is OFF (Manual)", INFO, LOGS_DOSER);
       state.status = STATUS_OFF;
     }
     break;
@@ -736,7 +757,7 @@ void checkPumpSchedule(int index, DateTime now)
     if (state.status != STATUS_ON)
     {
       digitalWrite(doserPins[index], HIGH);
-      writeLOG(String("Pump_") + String(index + 1) + " is ON (Manual)", 0, LOGS_DOSER);
+      log(String("Pump_") + String(index + 1) + " is ON (Manual)", INFO, LOGS_DOSER);
       state.status = STATUS_ON;
     }
     break;
@@ -759,7 +780,7 @@ void checkPumpSchedule(int index, DateTime now)
       state.running = true;
       state.lastProgressPercent = -1;
       digitalWrite(doserPins[index], HIGH);
-      writeLOG(String("Pump_") + String(index + 1) + " is ON (Auto) for " + state.durationMs + " ms", 0, LOGS_DOSER);
+      log(String("Pump_") + String(index + 1) + " is ON (Auto) for " + state.durationMs + " ms", INFO, LOGS_DOSER);
       pump["hasRunToday"] = true;
       pump["currentVolume"] = volume - dosage;
       saveConfigToSD();
@@ -773,7 +794,7 @@ void checkPumpSchedule(int index, DateTime now)
       if (percent / 1 != state.lastProgressPercent / 1)
       {
         state.progress = percent;
-        writeLOG(String("Pump_") + String(index + 1) + " progress: " + percent + "%", 0, LOGS_DOSER);
+        log(String("Pump_") + String(index + 1) + " progress: " + percent + "%", INFO, LOGS_DOSER);
         state.lastProgressPercent = percent;
       }
 
@@ -782,7 +803,7 @@ void checkPumpSchedule(int index, DateTime now)
         digitalWrite(doserPins[index], LOW);
         state.running = false;
         state.status = STATUS_OFF;
-        writeLOG(String("Pump_") + String(index + 1) + " is OFF (Auto)", 0, LOGS_DOSER);
+        log(String("Pump_") + String(index + 1) + " is OFF (Auto)", INFO, LOGS_DOSER);
       }
       else
       {
@@ -807,8 +828,8 @@ void checkTemp()
       statusTemp = 0;
       digitalWrite(RELAY_COOL, LOW);
       digitalWrite(RELAY_HEAT, LOW);
-      writeLOG("RELAY_COOL is OFF (Manual)", 0, LOGS_RELAY);
-      writeLOG("RELAY_HEAT is OFF (Manual)", 0, LOGS_RELAY);
+      log("RELAY_COOL is OFF (Manual)", INFO, LOGS_RELAY);
+      log("RELAY_HEAT is OFF (Manual)", INFO, LOGS_RELAY);
     }
     break;
   case 1:
@@ -817,8 +838,8 @@ void checkTemp()
       statusTemp = 1;
       digitalWrite(RELAY_COOL, HIGH);
       digitalWrite(RELAY_HEAT, LOW);
-      writeLOG("RELAY_COOL is ON (Manual)", 0, LOGS_RELAY);
-      writeLOG("RELAY_HEAT is OFF (Manual)", 0, LOGS_RELAY);
+      log("RELAY_COOL is ON (Manual)", INFO, LOGS_RELAY);
+      log("RELAY_HEAT is OFF (Manual)", INFO, LOGS_RELAY);
     }
     break;
   case 2:
@@ -827,8 +848,8 @@ void checkTemp()
       statusTemp = 2;
       digitalWrite(RELAY_COOL, LOW);
       digitalWrite(RELAY_HEAT, HIGH);
-      writeLOG("RELAY_COOL is OFF (Manual)", 0, LOGS_RELAY);
-      writeLOG("RELAY_HEAT is ON (Manual)", 0, LOGS_RELAY);
+      log("RELAY_COOL is OFF (Manual)", INFO, LOGS_RELAY);
+      log("RELAY_HEAT is ON (Manual)", INFO, LOGS_RELAY);
     }
     break;
   case 3:
@@ -837,8 +858,8 @@ void checkTemp()
       statusTemp = 3;
       digitalWrite(RELAY_COOL, HIGH);
       digitalWrite(RELAY_HEAT, HIGH);
-      writeLOG("RELAY_COOL is ON (Manual)", 0, LOGS_RELAY);
-      writeLOG("RELAY_HEAT is ON (Manual)", 0, LOGS_RELAY);
+      log("RELAY_COOL is ON (Manual)", INFO, LOGS_RELAY);
+      log("RELAY_HEAT is ON (Manual)", INFO, LOGS_RELAY);
     }
     break;
   case 4:
@@ -856,12 +877,12 @@ void checkTemp()
         {
           digitalWrite(RELAY_HEAT, LOW);
           digitalWrite(RELAY_COOL, LOW);
-          writeLOG("RELAY_COOL is OFF (Error DS18B20)", 0, LOGS_RELAY);
-          writeLOG("RELAY_HEAT is OFF (Error DS18B20)", 0, LOGS_RELAY);
+          log("RELAY_COOL is OFF (Error DS18B20)", INFO, LOGS_RELAY);
+          log("RELAY_HEAT is OFF (Error DS18B20)", INFO, LOGS_RELAY);
           statusTemp = 0;
         }
         return;
-        // writeLOG("Unable to read information from DS18B20", 2, LOGS_SYSTEM);
+        // log("Unable to read information from DS18B20", ERROR, LOGS_SYSTEM);
       };
 
       regulatorUp.input = inputTemp;
@@ -874,8 +895,8 @@ void checkTemp()
           statusTemp = 1;
           digitalWrite(RELAY_HEAT, LOW);
           digitalWrite(RELAY_COOL, HIGH);
-          writeLOG("RELAY_COOL is ON (Auto)", 0, LOGS_RELAY);
-          writeLOG("RELAY_HEAT is OFF (Auto)", 0, LOGS_RELAY);
+          log("RELAY_COOL is ON (Auto)", INFO, LOGS_RELAY);
+          log("RELAY_HEAT is OFF (Auto)", INFO, LOGS_RELAY);
         }
       }
       if (regulatorDown.getResult() == 1 && statusTemp != 2) // Heat
@@ -885,8 +906,8 @@ void checkTemp()
           statusTemp = 2;
           digitalWrite(RELAY_COOL, LOW);
           digitalWrite(RELAY_HEAT, HIGH);
-          writeLOG("RELAY_COOL is OFF (Auto)", 0, LOGS_RELAY);
-          writeLOG("RELAY_HEAT is ON (Auto)", 0, LOGS_RELAY);
+          log("RELAY_COOL is OFF (Auto)", INFO, LOGS_RELAY);
+          log("RELAY_HEAT is ON (Auto)", INFO, LOGS_RELAY);
         }
       }
       if (regulatorUp.getResult() == 0 && regulatorDown.getResult() == 0 && statusTemp != 0) // Error
@@ -896,8 +917,8 @@ void checkTemp()
           statusTemp = 0;
           digitalWrite(RELAY_COOL, LOW);
           digitalWrite(RELAY_HEAT, LOW);
-          writeLOG("RELAY_COOL is OFF (Auto)", 0, LOGS_RELAY);
-          writeLOG("RELAY_HEAT is OFF (Auto)", 0, LOGS_RELAY);
+          log("RELAY_COOL is OFF (Auto)", INFO, LOGS_RELAY);
+          log("RELAY_HEAT is OFF (Auto)", INFO, LOGS_RELAY);
         }
       }
     }

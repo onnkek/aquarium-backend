@@ -27,9 +27,9 @@
 #define NUM_LEDS 16
 #define LED 13
 
-#define LOGS_SYSTEM "/system.log"
-#define LOGS_RELAY "/relay.log"
-#define LOGS_DOSER "/doser.log"
+#define LOGS_SYSTEM "/logs/system.log"
+#define LOGS_RELAY "/logs/relay.log"
+#define LOGS_DOSER "/logs/doser.log"
 
 #define DOSER_COUNT 4
 #define EXTRA_COUNT 4
