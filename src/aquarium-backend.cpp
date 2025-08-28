@@ -305,7 +305,7 @@ void setup()
   // Core 1: UpdateTime + Logger
   xTaskCreatePinnedToCore(vTaskUpdateTime, "UpdateTime", 2048, NULL, 3, NULL, 1);
   xTaskCreatePinnedToCore(vTaskLogger, "Logger", 4096, NULL, 1, NULL, 1);
-
+  loadConfigFromSD(); // Read config
   double setting = config["temp"]["setting"];
   double hysteresis = config["temp"]["hysteresis"];
   double k = config["temp"]["k"];
@@ -316,7 +316,7 @@ void setup()
   regulatorUp.k = k;
   regulatorDown.k = k;
   delay(1000);
-  loadConfigFromSD(); // Read config
+
   log("ESP32 initialized successfully", INFO, LOGS_SYSTEM);
 }
 
@@ -494,7 +494,6 @@ String readLOG(String path)
 }
 String getLogType(LogType type)
 {
-  String typeString;
   switch (type)
   {
   case 0:
@@ -655,7 +654,13 @@ void checkARGB(DateTime now)
     break;
   }
 }
-
+String toUpper(const char *str)
+{
+  static String s;
+  s = str;
+  s.toUpperCase();
+  return s.c_str();
+}
 // ================== CHECK EXTRA RELAY ==================
 void checkExtraRelay(int index, DateTime now)
 {
@@ -679,7 +684,7 @@ void checkExtraRelay(int index, DateTime now)
     digitalWrite(extraPins[index], LOW);
     if (state.status != STATUS_OFF)
     {
-      log(String("RELAY_") + extraKeys[index] + " is OFF (Manual)", INFO, LOGS_RELAY);
+      log(String("RELAY ") + toUpper(extraKeys[index]) + " is OFF (Manual)", INFO, LOGS_RELAY);
       state.status = STATUS_OFF;
     }
     break;
@@ -688,7 +693,7 @@ void checkExtraRelay(int index, DateTime now)
     digitalWrite(extraPins[index], HIGH);
     if (state.status != STATUS_ON)
     {
-      log(String("RELAY_") + extraKeys[index] + " is ON (Manual)", INFO, LOGS_RELAY);
+      log(String("RELAY ") + toUpper(extraKeys[index]) + " is ON (Manual)", INFO, LOGS_RELAY);
       state.status = STATUS_ON;
     }
     break;
@@ -708,13 +713,13 @@ void checkExtraRelay(int index, DateTime now)
     if (active && state.status != STATUS_ON)
     {
       digitalWrite(extraPins[index], HIGH);
-      log(String("RELAY_") + extraKeys[index] + " is ON (Auto)", INFO, LOGS_RELAY);
+      log(String("RELAY ") + toUpper(extraKeys[index]) + " is ON (Auto)", INFO, LOGS_RELAY);
       state.status = STATUS_ON;
     }
     else if (!active && state.status != STATUS_OFF)
     {
       digitalWrite(extraPins[index], LOW);
-      log(String("RELAY_") + extraKeys[index] + " is OFF (Auto)", INFO, LOGS_RELAY);
+      log(String("RELAY ") + toUpper(extraKeys[index]) + " is OFF (Auto)", INFO, LOGS_RELAY);
       state.status = STATUS_OFF;
     }
     break;
@@ -748,7 +753,7 @@ void checkPumpSchedule(int index, DateTime now)
     if (state.status != STATUS_OFF)
     {
       digitalWrite(doserPins[index], LOW);
-      log(String("Pump_") + String(index + 1) + " is OFF (Manual)", INFO, LOGS_DOSER);
+      log(String("PUMP ") + String(index + 1) + " is OFF (Manual)", INFO, LOGS_DOSER);
       state.status = STATUS_OFF;
     }
     break;
@@ -757,7 +762,7 @@ void checkPumpSchedule(int index, DateTime now)
     if (state.status != STATUS_ON)
     {
       digitalWrite(doserPins[index], HIGH);
-      log(String("Pump_") + String(index + 1) + " is ON (Manual)", INFO, LOGS_DOSER);
+      log(String("PUMP ") + String(index + 1) + " is ON (Manual)", INFO, LOGS_DOSER);
       state.status = STATUS_ON;
     }
     break;
@@ -780,7 +785,7 @@ void checkPumpSchedule(int index, DateTime now)
       state.running = true;
       state.lastProgressPercent = -1;
       digitalWrite(doserPins[index], HIGH);
-      log(String("Pump_") + String(index + 1) + " is ON (Auto) for " + state.durationMs + " ms", INFO, LOGS_DOSER);
+      log(String("PUMP ") + String(index + 1) + " is ON (Auto) for " + state.durationMs + " ms", INFO, LOGS_DOSER);
       pump["hasRunToday"] = true;
       pump["currentVolume"] = volume - dosage;
       saveConfigToSD();
@@ -794,8 +799,11 @@ void checkPumpSchedule(int index, DateTime now)
       if (percent / 1 != state.lastProgressPercent / 1)
       {
         state.progress = percent;
-        log(String("Pump_") + String(index + 1) + " progress: " + percent + "%", INFO, LOGS_DOSER);
         state.lastProgressPercent = percent;
+        if (percent % 10 == 0)
+        {
+          log(String("PUMP ") + String(index + 1) + " progress: " + percent + "%", INFO, LOGS_DOSER);
+        }
       }
 
       if (elapsed >= state.durationMs)
@@ -803,7 +811,7 @@ void checkPumpSchedule(int index, DateTime now)
         digitalWrite(doserPins[index], LOW);
         state.running = false;
         state.status = STATUS_OFF;
-        log(String("Pump_") + String(index + 1) + " is OFF (Auto)", INFO, LOGS_DOSER);
+        log(String("PUMP ") + String(index + 1) + " is OFF (Auto)", INFO, LOGS_DOSER);
       }
       else
       {
@@ -828,8 +836,8 @@ void checkTemp()
       statusTemp = 0;
       digitalWrite(RELAY_COOL, LOW);
       digitalWrite(RELAY_HEAT, LOW);
-      log("RELAY_COOL is OFF (Manual)", INFO, LOGS_RELAY);
-      log("RELAY_HEAT is OFF (Manual)", INFO, LOGS_RELAY);
+      log("RELAY COOL is OFF (Manual)", INFO, LOGS_RELAY);
+      log("RELAY HEAT is OFF (Manual)", INFO, LOGS_RELAY);
     }
     break;
   case 1:
@@ -838,8 +846,8 @@ void checkTemp()
       statusTemp = 1;
       digitalWrite(RELAY_COOL, HIGH);
       digitalWrite(RELAY_HEAT, LOW);
-      log("RELAY_COOL is ON (Manual)", INFO, LOGS_RELAY);
-      log("RELAY_HEAT is OFF (Manual)", INFO, LOGS_RELAY);
+      log("RELAY COOL is ON (Manual)", INFO, LOGS_RELAY);
+      log("RELAY HEAT is OFF (Manual)", INFO, LOGS_RELAY);
     }
     break;
   case 2:
@@ -848,8 +856,8 @@ void checkTemp()
       statusTemp = 2;
       digitalWrite(RELAY_COOL, LOW);
       digitalWrite(RELAY_HEAT, HIGH);
-      log("RELAY_COOL is OFF (Manual)", INFO, LOGS_RELAY);
-      log("RELAY_HEAT is ON (Manual)", INFO, LOGS_RELAY);
+      log("RELAY COOL is OFF (Manual)", INFO, LOGS_RELAY);
+      log("RELAY HEAT is ON (Manual)", INFO, LOGS_RELAY);
     }
     break;
   case 3:
@@ -858,8 +866,8 @@ void checkTemp()
       statusTemp = 3;
       digitalWrite(RELAY_COOL, HIGH);
       digitalWrite(RELAY_HEAT, HIGH);
-      log("RELAY_COOL is ON (Manual)", INFO, LOGS_RELAY);
-      log("RELAY_HEAT is ON (Manual)", INFO, LOGS_RELAY);
+      log("RELAY COOL is ON (Manual)", INFO, LOGS_RELAY);
+      log("RELAY HEAT is ON (Manual)", INFO, LOGS_RELAY);
     }
     break;
   case 4:
@@ -877,8 +885,8 @@ void checkTemp()
         {
           digitalWrite(RELAY_HEAT, LOW);
           digitalWrite(RELAY_COOL, LOW);
-          log("RELAY_COOL is OFF (Error DS18B20)", INFO, LOGS_RELAY);
-          log("RELAY_HEAT is OFF (Error DS18B20)", INFO, LOGS_RELAY);
+          log("RELAY COOL is OFF (Error DS18B20)", INFO, LOGS_RELAY);
+          log("RELAY HEAT is OFF (Error DS18B20)", INFO, LOGS_RELAY);
           statusTemp = 0;
         }
         return;
@@ -890,36 +898,27 @@ void checkTemp()
 
       if (regulatorUp.getResult() == 1 && statusTemp != 1) // Cool
       {
-        if (statusTemp != 1)
-        {
-          statusTemp = 1;
-          digitalWrite(RELAY_HEAT, LOW);
-          digitalWrite(RELAY_COOL, HIGH);
-          log("RELAY_COOL is ON (Auto)", INFO, LOGS_RELAY);
-          log("RELAY_HEAT is OFF (Auto)", INFO, LOGS_RELAY);
-        }
+        statusTemp = 1;
+        digitalWrite(RELAY_COOL, HIGH);
+        log("RELAY COOL is ON (Auto)", INFO, LOGS_RELAY);
       }
       if (regulatorDown.getResult() == 1 && statusTemp != 2) // Heat
       {
-        if (statusTemp != 2)
-        {
-          statusTemp = 2;
-          digitalWrite(RELAY_COOL, LOW);
-          digitalWrite(RELAY_HEAT, HIGH);
-          log("RELAY_COOL is OFF (Auto)", INFO, LOGS_RELAY);
-          log("RELAY_HEAT is ON (Auto)", INFO, LOGS_RELAY);
-        }
+        statusTemp = 2;
+        digitalWrite(RELAY_HEAT, HIGH);
+        log("RELAY HEAT is ON (Auto)", INFO, LOGS_RELAY);
       }
-      if (regulatorUp.getResult() == 0 && regulatorDown.getResult() == 0 && statusTemp != 0) // Error
+      if (regulatorUp.getResult() == 0 && statusTemp != 0) // Off Cool
       {
-        if (statusTemp != 0)
-        {
-          statusTemp = 0;
-          digitalWrite(RELAY_COOL, LOW);
-          digitalWrite(RELAY_HEAT, LOW);
-          log("RELAY_COOL is OFF (Auto)", INFO, LOGS_RELAY);
-          log("RELAY_HEAT is OFF (Auto)", INFO, LOGS_RELAY);
-        }
+        statusTemp = 0;
+        digitalWrite(RELAY_COOL, LOW);
+        log("RELAY COOL is OFF (Auto)", INFO, LOGS_RELAY);
+      }
+      if (regulatorDown.getResult() == 0 && statusTemp != 0) // Off Heat
+      {
+        statusTemp = 0;
+        digitalWrite(RELAY_HEAT, LOW);
+        log("RELAY HEAT is OFF (Auto)", INFO, LOGS_RELAY);
       }
     }
     break;
