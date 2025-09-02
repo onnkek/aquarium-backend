@@ -399,6 +399,7 @@ String getCurrentInfo()
   systemInfo["freeSpace"] = SD.totalBytes() - SD.usedBytes();
   systemInfo["freeHeap"] = ESP.getFreeHeap();
   systemInfo["heapSize"] = ESP.getHeapSize();
+  systemInfo["frequency"] = ESP.getCpuFreqMHz();
 
   pump1Info["status"] = doserStates[0].status == 0 ? false : true;
   pump1Info["introduced"] = doserStates[0].progress;
@@ -827,7 +828,14 @@ void checkTemp()
   ds.requestTemp();
   int timeout = config["temp"]["timeout"];
   int mode = config["temp"]["mode"];
-
+  EVERY_MS(1000)
+  {
+    if (ds.readTemp())
+    {
+      inputTemp = ds.getTemp();
+      // Serial.println(inputTemp);
+    }
+  }
   switch (mode) // mode: 0 - off, 1 - cool, 2 - heat, 3 - cool+heat, 4 - auto
   {
   case 0:
@@ -873,26 +881,6 @@ void checkTemp()
   case 4:
     EVERY_MS(timeout * 1000)
     {
-      if (ds.readTemp())
-      {
-        inputTemp = ds.getTemp();
-        // Serial.println(inputTemp);
-      }
-      else
-      {
-
-        if (statusTemp != 0)
-        {
-          digitalWrite(RELAY_HEAT, LOW);
-          digitalWrite(RELAY_COOL, LOW);
-          log("RELAY COOL is OFF (Error DS18B20)", INFO, LOGS_RELAY);
-          log("RELAY HEAT is OFF (Error DS18B20)", INFO, LOGS_RELAY);
-          statusTemp = 0;
-        }
-        return;
-        // log("Unable to read information from DS18B20", ERROR, LOGS_SYSTEM);
-      };
-
       regulatorUp.input = inputTemp;
       regulatorDown.input = inputTemp;
 
@@ -908,17 +896,19 @@ void checkTemp()
         digitalWrite(RELAY_HEAT, HIGH);
         log("RELAY HEAT is ON (Auto)", INFO, LOGS_RELAY);
       }
-      if (regulatorUp.getResult() == 0 && statusTemp != 0) // Off Cool
+      if (regulatorUp.getResult() == 0 && regulatorDown.getResult() == 0 && statusTemp != 0) // Off Cool/Heat
       {
         statusTemp = 0;
-        digitalWrite(RELAY_COOL, LOW);
-        log("RELAY COOL is OFF (Auto)", INFO, LOGS_RELAY);
-      }
-      if (regulatorDown.getResult() == 0 && statusTemp != 0) // Off Heat
-      {
-        statusTemp = 0;
-        digitalWrite(RELAY_HEAT, LOW);
-        log("RELAY HEAT is OFF (Auto)", INFO, LOGS_RELAY);
+        if (regulatorUp.getResult() == 0)
+        {
+          digitalWrite(RELAY_COOL, LOW);
+          log("RELAY COOL is OFF (Auto)", INFO, LOGS_RELAY);
+        }
+        if (regulatorDown.getResult() == 0)
+        {
+          digitalWrite(RELAY_HEAT, LOW);
+          log("RELAY HEAT is OFF (Auto)", INFO, LOGS_RELAY);
+        }
       }
     }
     break;
