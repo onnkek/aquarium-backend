@@ -19,6 +19,7 @@
 #include <GyverRelay.h>
 #include "RTClib.h"
 #include "defs.h"
+#include <Tachometer.h>
 
 const int doserPins[DOSER_COUNT] = {DOSER_1, DOSER_2, DOSER_3, DOSER_4};
 const char *doserKeys[DOSER_COUNT] = {"0", "1", "2", "3"};
@@ -41,6 +42,16 @@ const char *ssid = "A";
 const char *password = "882882882";
 int64_t uptime;
 DynamicJsonDocument config(16384);
+
+const int PWM_CHANNEL = 0;
+const int PWM_FREQ = 30000; // 39 кГц 200гц
+const int PWM_RES = 10;     // 0..1023
+Tachometer tacho;
+
+void isr()
+{
+  tacho.tick(); // сообщаем библиотеке об этом
+}
 
 // ================== RELAY STATE ==================
 enum RelayStatus
@@ -174,6 +185,19 @@ void safeAdjust(DateTime dt)
   rtc.adjust(dt);
 }
 
+uint16_t fanSpeedToPwm(uint8_t percent)
+{
+  if (percent == 0)
+    return 0; // полное выключение
+  if (percent > 100)
+    percent = 100;
+
+  const uint16_t pwmMin = 200;
+  const uint16_t pwmMax = 1024;
+
+  return pwmMin + (uint32_t)(percent - 1) * (pwmMax - pwmMin) / 99;
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -197,6 +221,15 @@ void setup()
   digitalWrite(DOSER_2, LOW);
   digitalWrite(DOSER_3, LOW);
   digitalWrite(DOSER_4, LOW);
+
+  pinMode(TACH_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(TACH_PIN), isr, FALLING);
+  tacho.setWindow(10); // установка количества тиков для счёта времени (по умолч 10)
+  // tacho.setTimeout(2000); // таймаут прерываний (мс), после которого считается что вращение прекратилось
+  ledcSetup(PWM_CHANNEL, PWM_FREQ, PWM_RES);
+  ledcAttachPin(FAN_PWM_PIN, PWM_CHANNEL);
+  // ledcWrite(PWM_CHANNEL, 0); // вентилятор выключен
+  ledcWrite(PWM_CHANNEL, 1024);
 
   Wire.begin(SDA_PIN, SCL_PIN);
   if (rtc.begin() == false)
@@ -325,13 +358,17 @@ void loop()
   ftpSrv.handleFTP();
   EVERY_MS(10)
   {
+    checkARGB(lastTime);
+  }
+
+  EVERY_MS(100)
+  {
     for (int i = 0; i < EXTRA_COUNT; i++)
       checkExtraRelay(i, lastTime);
 
     for (int i = 0; i < DOSER_COUNT; i++)
       checkPumpSchedule(i, lastTime);
 
-    checkARGB(lastTime);
     checkTemp();
 
     // Reset hasRunToday at midnight
@@ -344,6 +381,8 @@ void loop()
       saveConfigToSD();
       log("New day -> reset doser flags", WARNING, LOGS_DOSER);
     }
+    int pwm = config["system"]["pwm"] | 1024;
+    ledcWrite(PWM_CHANNEL, fanSpeedToPwm(pwm));
   }
 
   EVERY_MS(1000)
@@ -391,6 +430,7 @@ String getCurrentInfo()
   aht20Info["hum"] = statusHumidity;
 
   systemInfo["time"] = timeInfo;
+  systemInfo["fan"] = tacho.getRPM() / 2;
   systemInfo["chipTemp"] = temperatureRead();
   systemInfo["outside"] = aht20Info;
   systemInfo["uptime"] = esp_timer_get_time();
@@ -552,6 +592,21 @@ String getARGBMode(int mode)
   }
 }
 
+String getStyleName(int style)
+{
+  switch (style)
+  {
+  case 2:
+    return "Cycle";
+  case 3:
+    return "Gradient";
+  case 4:
+    return "Custom";
+  default:
+    return "Static";
+  }
+}
+
 // ================== CHECK ARGB ==================
 void checkARGB(DateTime now)
 {
@@ -560,6 +615,7 @@ void checkARGB(DateTime now)
     return;
 
   int mode = argb["mode"] | 0;
+  int style = argb["style"] | 0;
   int brightness = argb["brightness"] | 128;
   const char *onStr = argb["on"] | "00:00";
   const char *offStr = argb["off"] | "00:00";
@@ -576,23 +632,42 @@ void checkARGB(DateTime now)
                                     : (nowM >= onMins || nowM < offMins);
 
   static int lastMode = -1;
+  static int lastStyle = -1;
   static bool lastActive = false;
 
   FastLED.setBrightness(brightness);
 
   // Логируем изменение состояния
-  if (active != lastActive || mode != lastMode)
+  if (active != lastActive || mode != lastMode || style != lastStyle)
   {
-    if (!active || mode == 0)
-      log(String("ARGB") + " is OFF (Manual)", INFO, LOGS_RELAY);
+    if (mode == 0)
+    {
+      log(String("ARGB") + " is OFF (Manual)" + getStyleName(style), INFO, LOGS_RELAY);
+    }
+
+    else if (mode == 1)
+    {
+      log(String("ARGB") + " is ON (Manual) " + getStyleName(style), INFO, LOGS_RELAY);
+    }
     else
-      log(String("ARGB") + " is " + mode, INFO, LOGS_RELAY);
+    {
+      if (active)
+      {
+        log(String("ARGB") + " is ON (Auto) " + getStyleName(style), INFO, LOGS_RELAY);
+      }
+      else
+      {
+        log(String("ARGB") + " is OFF (Auto) " + getStyleName(style), INFO, LOGS_RELAY);
+        argbState.status = STATUS_OFF;
+      }
+    }
 
     lastActive = active;
     lastMode = mode;
+    lastStyle = style;
   }
 
-  if (!active || mode == 0)
+  if (mode == 0 || (mode == 2 && !active))
   {
     fill_solid(leds, NUM_LEDS, CRGB::Black);
     FastLED.show();
@@ -607,7 +682,7 @@ void checkARGB(DateTime now)
   CRGB startColor = CRGB(grad["start"]["r"] | 0, grad["start"]["b"] | 0, grad["start"]["g"] | 0);
   CRGB endColor = CRGB(grad["end"]["r"] | 0, grad["end"]["b"] | 0, grad["end"]["g"] | 0);
   JsonArray arr = argb["custom"];
-  switch (mode)
+  switch (style)
   {
   case 1:
     // STATIC
