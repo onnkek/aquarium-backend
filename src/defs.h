@@ -13,14 +13,17 @@
 
 #define DOSER_1 18
 #define DOSER_2 21
-#define DOSER_3 43
+#define DOSER_3 14
 #define DOSER_4 44
 
 #define ARGB_PIN 12
-#define DS18B20 14
+#define DS18B20 43
 
 #define SDA_PIN 3
 #define SCL_PIN 8
+
+#define FAN_PWM_PIN 13
+#define TACH_PIN 36
 
 ////////////////////////////
 
