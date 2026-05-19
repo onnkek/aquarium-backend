@@ -1,0 +1,271 @@
+{
+	"system": {
+		"name": "System",
+		"update": 1,
+		"pwm": 30
+	},
+	"doser": {
+		"0": {
+			"name": "NO3",
+			"period": {
+				"su": true,
+				"mo": true,
+				"tu": true,
+				"we": true,
+				"th": true,
+				"fr": true,
+				"sa": true
+			},
+			"time": "14:00",
+			"currentVolume": 436,
+			"maxVolume": 450,
+			"mode": 2,
+			"status": 0,
+			"dosage": 7,
+			"rate": 0.5,
+			"hasRunToday": false
+		},
+		"1": {
+			"name": "PO4",
+			"period": {
+				"su": true,
+				"mo": true,
+				"tu": true,
+				"we": true,
+				"th": true,
+				"fr": true,
+				"sa": true
+			},
+			"time": "14:00",
+			"currentVolume": 196.6,
+			"maxVolume": 450,
+			"mode": 2,
+			"status": 0,
+			"dosage": 3.4,
+			"rate": 0.5,
+			"hasRunToday": false
+		},
+		"2": {
+			"name": "Micro1",
+			"period": {
+				"su": true,
+				"mo": true,
+				"tu": true,
+				"we": true,
+				"th": true,
+				"fr": true,
+				"sa": true
+			},
+			"time": "14:00",
+			"currentVolume": 442,
+			"maxVolume": 450,
+			"mode": 2,
+			"status": 0,
+			"dosage": 4,
+			"rate": 0.5,
+			"hasRunToday": false
+		},
+		"3": {
+			"name": "Micro2",
+			"period": {
+				"su": true,
+				"mo": true,
+				"tu": true,
+				"we": true,
+				"th": true,
+				"fr": true,
+				"sa": true
+			},
+			"time": "14:00",
+			"currentVolume": 440,
+			"maxVolume": 450,
+			"mode": 2,
+			"status": 0,
+			"dosage": 5,
+			"rate": 0.5,
+			"hasRunToday": false
+		}
+	},
+	"co2": {
+		"name": "CO2 System",
+		"on": "13:00",
+		"off": "20:00",
+		"mode": 2
+	},
+	"o2": {
+		"name": "O2 System",
+		"on": "21:00",
+		"off": "14:00",
+		"mode": 2
+	},
+	"light": {
+		"name": "Lightning",
+		"on": "14:00",
+		"off": "22:00",
+		"mode": 2
+	},
+	"filter": {
+		"name": "Filterting",
+		"on": "null",
+		"off": "null",
+		"mode": 1
+	},
+	"argb": {
+		"name": "Backlighting",
+		"mode": 2,
+		"style": 3,
+		"brightness": 100,
+		"static": {
+			"r": 255,
+			"g": 0,
+			"b": 0
+		},
+		"gradient": {
+			"start": {
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			"end": {
+				"r": 20,
+				"g": 110,
+				"b": 255
+			}
+		},
+		"custom": [
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 0,
+				"b": 0
+			},
+			{
+				"r": 255,
+				"g": 247,
+				"b": 0
+			},
+			{
+				"r": 0,
+				"g": 8,
+				"b": 255
+			}
+		],
+		"cycle": {
+			"speed": 20
+		},
+		"on": "14:00",
+		"off": "00:00"
+	},
+	"temp": {
+		"name": "Termostat",
+		"setting": "23",
+		"hysteresis": "1",
+		"k": "0.5",
+		"timeout": "1",
+		"mode": 4
+	}
+}

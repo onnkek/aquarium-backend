@@ -27,8 +27,16 @@ enum LogType
   WARNING,
   ERROR
 };
-void log(const String &text, LogType type, const String &path);
-
+enum LogCategory {
+  RELAY,
+  DOSER,
+  SYSTEM
+};
+void log(const String &text, LogType type, const LogCategory category);
+void ensureLogDir();
+String getLogPath(LogCategory cat);
+String getLogType(LogType type);
+String getDateString();
 // void handleGetConfig(AsyncWebServerRequest *request);
 // void handlePostConfig(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total);
 // void handleGetCurrent(AsyncWebServerRequest *request);

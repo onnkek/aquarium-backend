@@ -27,8 +27,7 @@
 
 ////////////////////////////
 
-#define NUM_LEDS 16
-#define LED 13
+#define NUM_LEDS 24
 
 #define LOGS_SYSTEM "/logs/system.log"
 #define LOGS_RELAY "/logs/relay.log"
