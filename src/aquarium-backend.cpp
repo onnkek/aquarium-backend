@@ -54,7 +54,7 @@ GyverDS18Single ds(DS18B20);
 const char *ssid = "A";
 const char *password = "882882882";
 int64_t uptime;
-DynamicJsonDocument config(16384);
+StaticJsonDocument<8192> config;
 
 const int PWM_CHANNEL = 0;
 const int PWM_FREQ = 30000; // 39 кГц 200гц
@@ -336,22 +336,6 @@ void setup()
   delay(1000);
 
   FastLED.addLeds<WS2811, ARGB_PIN, GRB>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
-
-  // Serial.println("Connecting to ");
-  // Serial.println(ssid);
-  // WiFi.mode(WIFI_STA);
-  // WiFi.begin(ssid, password);
-  // WiFi.setSleep(false);
-  // btStop();
-  // while (WiFi.status() != WL_CONNECTED)
-  // {
-  //   delay(500);
-  //   Serial.printf_P(PSTR("."));
-  // }
-  // Serial.println("");
-  // Serial.println("WiFi connected..!");
-  // Serial.print("Got IP: ");
-  // Serial.println(WiFi.localIP());
 
   if (!logQueue)
   {
@@ -1026,7 +1010,12 @@ void checkPumpSchedule(int index, DateTime now)
       digitalWrite(doserPins[index], HIGH);
       log(String("PUMP ") + String(index + 1) + " is ON (Auto) for " + state.durationMs + " ms", INFO, DOSER);
       pump["hasRunToday"] = true;
+      log(String("PUMP ") + String(index + 1) + " currentVolume before: " + volume + " ml", INFO, DOSER);
       pump["currentVolume"] = volume - dosage;
+      log(String("PUMP ") + String(index + 1) + " dosage: " + dosage + " ml", INFO, DOSER);
+      log(String("PUMP ") + String(index + 1) + " currentVolume after: " + volume + " ml", INFO, DOSER);
+      float newVolume = pump["currentVolume"];
+      log(String("PUMP ") + String(index + 1) + " pump[\"currentVolume\"] after: " + newVolume + " ml", INFO, DOSER);
       saveConfigToSD();
     }
 

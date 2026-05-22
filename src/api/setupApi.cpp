@@ -23,6 +23,13 @@ struct EventRecord
 	int16_t value;
 };
 #pragma pack(pop)
+struct EventRecordLegacy
+{
+	uint32_t ts;
+	uint8_t subtype;
+	uint8_t _pad;
+	int16_t value;
+};
 void ensureNotesDir()
 {
 	if (!SD.exists("/notes"))
@@ -35,12 +42,14 @@ void addCORS1(AsyncWebServerResponse *response)
 	response->addHeader("Access-Control-Allow-Origin", "*");
 	response->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
 	response->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+	response->addHeader("Access-Control-Expose-Headers", "X-Total-Records, X-Total-Bytes, X-Offset, X-Limit");
 }
 AsyncWebServerResponse *withCORS(AsyncWebServerResponse *res)
 {
 	res->addHeader("Access-Control-Allow-Origin", "*");
 	res->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
 	res->addHeader("Access-Control-Allow-Headers", "Content-Type");
+	res->addHeader("Access-Control-Expose-Headers", "X-Total-Records, X-Total-Bytes, X-Offset, X-Limit");
 	return res;
 }
 String pathFor(const String &uid)
@@ -295,7 +304,6 @@ void setupApi()
 
 	server.on("/api/metrics", HTTP_GET, [](AsyncWebServerRequest *request)
 						{
-
     if (!request->hasParam("metric") ||
         !request->hasParam("year") ||
         !request->hasParam("month") ||
@@ -305,56 +313,94 @@ void setupApi()
         return;
     }
 
-    String metric = request->getParam("metric")->value();
-    String year   = request->getParam("year")->value();
-    String month  = request->getParam("month")->value();
-    String day    = request->getParam("day")->value();
+    const String metric = request->getParam("metric")->value();
+    const int year   = request->getParam("year")->value().toInt();
+    const int month  = request->getParam("month")->value().toInt();
+    const int day    = request->getParam("day")->value().toInt();
 
-    char path[128];
+    int offset = 0;
+    int limit = 500;
+
+    if (request->hasParam("offset"))
+        offset = request->getParam("offset")->value().toInt();
+
+    if (request->hasParam("limit"))
+        limit = request->getParam("limit")->value().toInt();
+
+    if (offset < 0) offset = 0;
+    if (limit < 1) limit = 1;
+    if (limit > 1000) limit = 1000;
+
+    char path[96];
     snprintf(path, sizeof(path),
-        "/metrics/%s/%s/%s/%s.bin",
-        metric.c_str(),
-        year.c_str(),
-        month.c_str(),
-        day.c_str()
-    );
+             "/metrics/%s/%04d/%02d/%02d.bin",
+             metric.c_str(), year, month, day);
 
     if (!SD.exists(path)) {
         request->send(404, "text/plain", "not found");
         return;
     }
 
-    File file = SD.open(path);
+    File file = SD.open(path, FILE_READ);
+    if (!file) {
+        request->send(500, "text/plain", "failed to open file");
+        return;
+    }
 
-    AsyncResponseStream *res =
-        request->beginResponseStream("text/csv");
+    const size_t recSize = sizeof(MetricRecord);
+    const size_t totalRecords = file.size() / recSize;
 
-    res->print("ts,value\n");
+    if ((size_t)offset >= totalRecords) {
+        file.close();
+        request->send(416, "text/plain", "offset out of range");
+        return;
+    }
+
+    size_t recordsToSend = limit;
+    if ((size_t)offset + recordsToSend > totalRecords)
+        recordsToSend = totalRecords - offset;
+
+    if (!file.seek((size_t)offset * recSize)) {
+        file.close();
+        request->send(500, "text/plain", "seek failed");
+        return;
+    }
+
+    AsyncResponseStream *res = request->beginResponseStream("text/csv");
+    addCORS1(res);
+
+    res->addHeader("X-Total-Records", String(totalRecords));
+    res->addHeader("X-Offset", String(offset));
+    res->addHeader("X-Limit", String(recordsToSend));
+
+    if (offset == 0) {
+        res->print("ts,value\n");
+    }
 
     MetricRecord rec;
+    char line[48];
 
-    char line[64];
-
-    while (file.read((uint8_t*)&rec, sizeof(rec)) == sizeof(rec)) {
+    for (size_t i = 0; i < recordsToSend; i++) {
+        if (file.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) {
+            break;
+        }
 
         int len = snprintf(line, sizeof(line),
-            "%u,%.2f\n",
-            rec.ts,
-            rec.value / 100.0f
-        );
+                           "%lu,%.2f\n",
+                           (unsigned long)rec.ts,
+                           rec.value / 100.0f);
 
-        res->write((uint8_t*)line, len);
+        if (len > 0) {
+            res->write((const uint8_t*)line, len);
+        }
     }
 
     file.close();
-
     request->send(res); });
-	server.on("/api/logs",
-						HTTP_GET,
-						[](AsyncWebServerRequest *request)
+
+	server.on("/api/logs", HTTP_GET, [](AsyncWebServerRequest *request)
 						{
-							if (
-									!request->hasParam("type") ||
+							if (!request->hasParam("type") ||
 									!request->hasParam("year") ||
 									!request->hasParam("month") ||
 									!request->hasParam("day"))
@@ -363,13 +409,31 @@ void setupApi()
 								return;
 							}
 
-							String type = request->getParam("type")->value(); // relay/doser/system
-							String year = request->getParam("year")->value();
-							String month = request->getParam("month")->value();
-							String day = request->getParam("day")->value();
+							const String type = request->getParam("type")->value();
+							const int year = request->getParam("year")->value().toInt();
+							const int month = request->getParam("month")->value().toInt();
+							const int day = request->getParam("day")->value().toInt();
 
-							String path =
-									"/logs/" + year + "/" + month + "/" + day + "/" + type + ".log";
+							int offset = 0;
+							int limit = 2048;
+
+							if (request->hasParam("offset"))
+								offset = request->getParam("offset")->value().toInt();
+
+							if (request->hasParam("limit"))
+								limit = request->getParam("limit")->value().toInt();
+
+							if (offset < 0)
+								offset = 0;
+							if (limit < 1)
+								limit = 1;
+							if (limit > 8192)
+								limit = 8192;
+
+							char path[96];
+							snprintf(path, sizeof(path),
+											 "/logs/%04d/%02d/%02d/%s.log",
+											 year, month, day, type.c_str());
 
 							if (!SD.exists(path))
 							{
@@ -377,97 +441,166 @@ void setupApi()
 								return;
 							}
 
-							File file = SD.open(path);
-
+							File file = SD.open(path, FILE_READ);
 							if (!file)
 							{
 								request->send(500, "text/plain", "failed to open file");
+								return;
+							}
+
+							const size_t totalBytes = file.size();
+
+							if ((size_t)offset >= totalBytes)
+							{
+								file.close();
+								request->send(416, "text/plain", "offset out of range");
+								return;
+							}
+
+							size_t bytesToSend = limit;
+							if ((size_t)offset + bytesToSend > totalBytes)
+								bytesToSend = totalBytes - offset;
+
+							if (!file.seek((size_t)offset))
+							{
+								file.close();
+								request->send(500, "text/plain", "seek failed");
 								return;
 							}
 
 							AsyncResponseStream *response =
 									request->beginResponseStream("text/plain");
 
-							while (file.available())
+							addCORS1(response);
+
+							response->addHeader("X-Total-Bytes", String(totalBytes));
+							response->addHeader("X-Offset", String(offset));
+							response->addHeader("X-Limit", String(bytesToSend));
+
+							uint8_t buf[256];
+							size_t sent = 0;
+
+							while (sent < bytesToSend)
 							{
-								response->write(file.read());
+								size_t chunk = bytesToSend - sent;
+								if (chunk > sizeof(buf))
+									chunk = sizeof(buf);
+
+								size_t n = file.read(buf, chunk);
+								if (n == 0)
+									break;
+
+								response->write(buf, n);
+								sent += n;
 							}
 
 							file.close();
+							request->send(response); });
 
-							addCORS1(response);
-							request->send(response);
-						});
-	server.on("/api/events",
-						HTTP_GET,
-						[](AsyncWebServerRequest *request)
+	server.on("/api/events", HTTP_GET, [](AsyncWebServerRequest *request)
 						{
-							if (
-									!request->hasParam("type") ||
-									!request->hasParam("year") ||
-									!request->hasParam("month"))
-							{
-								request->send(400, "text/plain", "missing params");
-								return;
-							}
+  if (!request->hasParam("type") ||
+      !request->hasParam("year") ||
+      !request->hasParam("month"))
+  {
+    request->send(400, "text/plain", "missing params");
+    return;
+  }
 
-							String type = request->getParam("type")->value();
-							String year = request->getParam("year")->value();
+  const String type = request->getParam("type")->value();
+  const int year = request->getParam("year")->value().toInt();
+  const int month = request->getParam("month")->value().toInt();
 
-							int m = request->getParam("month")->value().toInt();
+  int offset = 0;
+  int limit = 500;
 
-							char monthStr[3];
-							snprintf(monthStr, sizeof(monthStr), "%02d", m);
+  if (request->hasParam("offset"))
+    offset = request->getParam("offset")->value().toInt();
 
-							String path =
-									"/events/" + type + "/" +
-									year + "/" + String(monthStr) + ".bin";
+  if (request->hasParam("limit"))
+    limit = request->getParam("limit")->value().toInt();
 
-							Serial.println("EVENT PATH: " + path);
+  if (offset < 0) offset = 0;
+  if (limit < 1) limit = 1;
+  if (limit > 1000) limit = 1000;
 
-							if (!SD.exists(path))
-							{
-								request->send(404, "text/plain", "not found");
-								return;
-							}
+  char monthStr[3];
+  snprintf(monthStr, sizeof(monthStr), "%02d", month);
 
-							File file = SD.open(path, FILE_READ);
+  char path[96];
+  snprintf(path, sizeof(path),
+           "/events/%s/%04d/%s.bin",
+           type.c_str(), year, monthStr);
 
-							if (!file)
-							{
-								request->send(500, "text/plain", "failed to open file");
-								return;
-							}
+  if (!SD.exists(path))
+  {
+    request->send(404, "text/plain", "not found");
+    return;
+  }
 
-							AsyncResponseStream *response =
-									request->beginResponseStream("text/csv");
+  File file = SD.open(path, FILE_READ);
+  if (!file)
+  {
+    request->send(500, "text/plain", "failed to open file");
+    return;
+  }
 
-							// CSV как у metrics (но с subtype добавили)
-							response->println("ts,subtype,value");
+  const size_t recSize = sizeof(EventRecordLegacy);
+  const size_t totalRecords = file.size() / recSize;
 
-							struct EventRecord
-							{
-								uint32_t ts;
-								uint8_t subtype;
-								int16_t value;
-							};
+  if ((size_t)offset >= totalRecords)
+  {
+    file.close();
+    request->send(416, "text/plain", "offset out of range");
+    return;
+  }
 
-							EventRecord rec;
+  size_t recordsToSend = limit;
+  if ((size_t)offset + recordsToSend > totalRecords)
+    recordsToSend = totalRecords - offset;
 
-							while (file.read((uint8_t *)&rec, sizeof(rec)) == sizeof(rec))
-							{
-								response->printf(
-										"%u,%u,%.2f\n",
-										rec.ts,
-										rec.subtype,
-										rec.value / 100.0f);
-							}
+  if (!file.seek((size_t)offset * recSize))
+  {
+    file.close();
+    request->send(500, "text/plain", "seek failed");
+    return;
+  }
 
-							file.close();
+  AsyncResponseStream *response = request->beginResponseStream("text/csv");
+  addCORS1(response);
 
-							addCORS1(response);
-							request->send(response);
-						});
+  response->addHeader("X-Total-Records", String(totalRecords));
+  response->addHeader("X-Offset", String(offset));
+  response->addHeader("X-Limit", String(recordsToSend));
+
+  if (offset == 0)
+  {
+    response->print("ts,subtype,value\n");
+  }
+
+  EventRecordLegacy rec;
+  char line[56];
+
+  for (size_t i = 0; i < recordsToSend; i++)
+  {
+    if (file.read((uint8_t *)&rec, sizeof(rec)) != sizeof(rec))
+      break;
+
+    int len = snprintf(line, sizeof(line),
+                       "%lu,%u,%.2f\n",
+                       (unsigned long)rec.ts,
+                       rec.subtype,
+                       rec.value / 100.0f);
+
+    if (len > 0)
+    {
+      response->write((const uint8_t *)line, len);
+    }
+  }
+
+  file.close();
+  request->send(response); });
+
 	server.on("/note", HTTP_GET, handleGetNote);
 	server.on("/note", HTTP_POST, [](AsyncWebServerRequest *req) {}, NULL, handleCreate);
 	server.on("/note", HTTP_PUT, [](AsyncWebServerRequest *req) {}, NULL, handleUpdate);

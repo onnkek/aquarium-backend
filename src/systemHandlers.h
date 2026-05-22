@@ -11,4 +11,4 @@ void handlePostTime(AsyncWebServerRequest *request, uint8_t *data, size_t len, s
 
 void addCORS(AsyncWebServerResponse *response);
 
-extern DynamicJsonDocument config;
+extern StaticJsonDocument<8192> config;
