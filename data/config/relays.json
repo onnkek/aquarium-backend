@@ -1,0 +1,26 @@
+{
+  "co2": {
+    "name": "CO2 System",
+    "on": "13:00",
+    "off": "20:00",
+    "mode": 0
+  },
+  "o2": {
+    "name": "O2 System",
+    "on": "21:00",
+    "off": "14:00",
+    "mode": 1
+  },
+  "filter": {
+    "name": "Filtering",
+    "on": "00:00",
+    "off": "23:59",
+    "mode": 1
+  },
+  "light": {
+    "name": "Light Cooling",
+    "on": "14:00",
+    "off": "22:00",
+    "mode": 1
+  }
+}

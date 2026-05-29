@@ -1,0 +1,8 @@
+{
+  "name": "Termostat",
+  "setting": "23",
+  "hysteresis": "1",
+  "k": "0.5",
+  "timeout": "1",
+  "mode": 0
+}

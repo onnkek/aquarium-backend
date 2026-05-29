@@ -49,6 +49,10 @@ public:
   // to process ftp requests
   void handleFTP();
 
+  // True while a client is logged in/being processed or a data transfer is active.
+  // Aquarium firmware uses this to pause its own SD writers, because FTP library touches SD directly.
+  bool active();
+
 private:
   enum internalState
   {

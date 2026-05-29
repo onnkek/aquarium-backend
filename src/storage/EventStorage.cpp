@@ -1,66 +1,45 @@
-#include "EventStorage.h"
+#include "storage/EventStorage.h"
 
-EventStorage::EventStorage(const char* type)
-  : type(type) {}
-
-String EventStorage::buildPath(DateTime now) {
-  char path[80];
+bool EventStorage::buildPath(
+  const char* type,
+  uint16_t year,
+  uint8_t month,
+  char* out,
+  size_t outLen
+) {
+  if (!type || !*type || !out || outLen == 0) return false;
+  if (month < 1 || month > 12) return false;
 
   snprintf(
-    path,
-    sizeof(path),
-    "/events/%s/%04d/%02d.bin",
-    type.c_str(),
-    now.year(),
-    now.month()
+    out,
+    outLen,
+    "/events/%s/%04u/%02u.bin",
+    type,
+    year,
+    month
   );
 
-  return String(path);
+  return true;
 }
 
-void EventStorage::ensureDirs(DateTime now) {
-  if (!SD.exists("/events")) {
-    SD.mkdir("/events");
+bool EventStorage::write(uint8_t subtype, float value, const DateTime& now) {
+  if (!storage_.available()) return false;
+
+  EventRecord rec{
+    now.unixtime(),
+    subtype,
+    static_cast<int16_t>(value * 100.0f)
+  };
+
+  char path[96];
+  if (!buildPath(type_, now.year(), now.month(), path, sizeof(path))) {
+    logger_.warn(LogCategory::Storage, "bad event path");
+    return false;
   }
 
-  String root = "/events/" + type;
-  if (!SD.exists(root)) {
-    SD.mkdir(root);
+  if (!storage_.appendBinary(path, reinterpret_cast<const uint8_t*>(&rec), sizeof(rec))) {
+    return false;
   }
 
-  char y[64];
-  snprintf(
-    y,
-    sizeof(y),
-    "/events/%s/%04d",
-    type.c_str(),
-    now.year()
-  );
-
-  if (!SD.exists(y)) {
-    SD.mkdir(y);
-  }
-}
-
-void EventStorage::write(uint8_t subtype, float value, DateTime now) {
-// String pathDebug = buildPath(now.unixtime());
-// Serial.println("METRIC WRITE: " + pathDebug);
-  EventRecord rec;
-
-  rec.ts = now.unixtime();
-  rec.subtype = subtype;
-  rec.value = (int16_t)(value * 100.0f);
-
-  ensureDirs(now);
-
-  String path = buildPath(now);
-
-  File file = SD.open(path, FILE_APPEND);
-  if (!file) {
-    Serial.println("EventStorage: SD open failed");
-    return;
-  }
-
-  file.write((uint8_t*)&rec, sizeof(rec));
-  file.close();
+  return true;
 }

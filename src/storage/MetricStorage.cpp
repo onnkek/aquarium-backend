@@ -1,92 +1,46 @@
-#include "MetricStorage.h"
+#include "storage/MetricStorage.h"
 
-#include <RTClib.h>
+bool MetricStorage::buildPath(
+  const char* metric,
+  uint16_t year,
+  uint8_t month,
+  uint8_t day,
+  char* out,
+  size_t outLen
+) {
+  if (!metric || !*metric || !out || outLen == 0) return false;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
 
+  snprintf(
+    out,
+    outLen,
+    "/metrics/%s/%04u/%02u/%02u.bin",
+    metric,
+    year,
+    month,
+    day
+  );
 
-MetricStorage::MetricStorage(const char *metricId)
-		: metricId(metricId)
-{
+  return true;
 }
 
-void MetricStorage::append(float value, DateTime now)
-{
-// 	String pathDebug = buildFilePath(now.unixtime());
-// Serial.println("METRIC WRITE: " + pathDebug);
-	MetricRecord rec;
-	rec.ts = now.unixtime();
-	rec.value = (int16_t)(value * 100.0f);
+bool MetricStorage::append(float value, const DateTime& now) {
+  if (!storage_.available()) return false;
 
-	ensureDirectories(rec.ts);
+  MetricRecord rec{
+    now.unixtime(),
+    static_cast<int16_t>(value * 100.0f)
+  };
 
-	String path = buildFilePath(rec.ts);
+  char path[96];
+  if (!buildPath(id_, now.year(), now.month(), now.day(), path, sizeof(path))) {
+    logger_.warn(LogCategory::Storage, "bad metric path");
+    return false;
+  }
 
-	File file = SD.open(path, FILE_APPEND);
+  if (!storage_.appendBinary(path, reinterpret_cast<const uint8_t*>(&rec), sizeof(rec))) {
+    return false;
+  }
 
-	if (!file)
-	{
-		Serial.println("SD open failed");
-		return;
-	}
-
-	file.write((uint8_t *)&rec, sizeof(rec));
-
-	file.close();
-}
-
-String MetricStorage::buildFilePath(uint32_t ts)
-{
-	DateTime dt(ts);
-
-	char path[128];
-
-	snprintf(
-			path,
-			sizeof(path),
-			"/metrics/%s/%04d/%02d/%02d.bin",
-			metricId.c_str(),
-			dt.year(),
-			dt.month(),
-			dt.day());
-
-	return String(path);
-}
-
-void MetricStorage::ensureDirectories(uint32_t ts)
-{
-	DateTime dt(ts);
-
-	if (!SD.exists("/metrics"))
-	{
-		SD.mkdir("/metrics");
-	}
-
-	String root = "/metrics/" + metricId;
-
-	if (!SD.exists(root))
-	{
-		SD.mkdir(root);
-	}
-
-	char y[64];
-	snprintf(y, sizeof(y),
-					 "/metrics/%s/%04d",
-					 metricId.c_str(),
-					 dt.year());
-
-	if (!SD.exists(y))
-	{
-		SD.mkdir(y);
-	}
-
-	char m[64];
-	snprintf(m, sizeof(m),
-					 "/metrics/%s/%04d/%02d",
-					 metricId.c_str(),
-					 dt.year(),
-					 dt.month());
-
-	if (!SD.exists(m))
-	{
-		SD.mkdir(m);
-	}
+  return true;
 }

@@ -1,0 +1,74 @@
+{
+  "0": {
+    "name": "NO3",
+    "period": {
+      "su": true,
+      "mo": true,
+      "tu": true,
+      "we": true,
+      "th": true,
+      "fr": true,
+      "sa": true
+    },
+    "time": "14:00",
+    "currentVolume": 436,
+    "maxVolume": 450,
+    "mode": 0,
+    "dosage": 7,
+    "rate": 0.5
+  },
+  "1": {
+    "name": "PO4",
+    "period": {
+      "su": true,
+      "mo": true,
+      "tu": true,
+      "we": true,
+      "th": true,
+      "fr": true,
+      "sa": true
+    },
+    "time": "14:00",
+    "currentVolume": 196.6,
+    "maxVolume": 450,
+    "mode": 0,
+    "dosage": 3.4,
+    "rate": 0.5
+  },
+  "2": {
+    "name": "Micro1",
+    "period": {
+      "su": true,
+      "mo": true,
+      "tu": true,
+      "we": true,
+      "th": true,
+      "fr": true,
+      "sa": true
+    },
+    "time": "14:00",
+    "currentVolume": 442,
+    "maxVolume": 450,
+    "mode": 0,
+    "dosage": 4,
+    "rate": 0.5
+  },
+  "3": {
+    "name": "Micro2",
+    "period": {
+      "su": true,
+      "mo": true,
+      "tu": true,
+      "we": true,
+      "th": true,
+      "fr": true,
+      "sa": true
+    },
+    "time": "14:00",
+    "currentVolume": 440,
+    "maxVolume": 450,
+    "mode": 0,
+    "dosage": 5,
+    "rate": 0.5
+  }
+}

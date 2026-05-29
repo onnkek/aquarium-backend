@@ -1,32 +1,25 @@
 #pragma once
-
 #include <Arduino.h>
-#include <SD.h>
-#include "RTClib.h"
-
-class RTC_DS3231;
+#include <RTClib.h>
+#include "core/Logger.h"
+#include "storage/StorageManager.h"
 
 #pragma pack(push, 1)
-
-struct MetricRecord
-{
-	uint32_t ts;
-	int16_t value;
+struct MetricRecord {
+  uint32_t ts;
+  int16_t value;
 };
-
 #pragma pack(pop)
+static_assert(sizeof(MetricRecord) == 6, "MetricRecord must be packed");
 
-class MetricStorage
-{
+class MetricStorage {
 public:
-	MetricStorage(const char *metricId);
-
-	void append(float value, DateTime now);
-
+  MetricStorage(const char* id, StorageManager& storage, Logger& logger)
+      : id_(id), storage_(storage), logger_(logger) {}
+  bool append(float value, const DateTime& now);
+  static bool buildPath(const char* metric, uint16_t year, uint8_t month, uint8_t day, char* out, size_t outLen);
 private:
-	String metricId;
-
-	String buildFilePath(uint32_t ts);
-
-	void ensureDirectories(uint32_t ts);
+  const char* id_;
+  StorageManager& storage_;
+  Logger& logger_;
 };

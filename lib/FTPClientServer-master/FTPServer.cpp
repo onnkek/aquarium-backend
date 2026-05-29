@@ -68,6 +68,11 @@ void FTPServer::stop()
   FTPCommon::stop();
 }
 
+bool FTPServer::active()
+{
+  return (cmdState != cInit && cmdState != cWait) || transferState != tIdle || control.connected() || data.connected();
+}
+
 void FTPServer::iniVariables()
 {
   // Default Data connection is Active
